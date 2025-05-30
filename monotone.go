@@ -22,9 +22,9 @@ var (
 	monotone_free    func(unsafe.Pointer) int
 	monotone_open    func(unsafe.Pointer, string) int
 	monotone_error   func(unsafe.Pointer) string
-	monotone_write   func(unsafe.Pointer, []Event, int) int
-	monotone_cursor  func(unsafe.Pointer, unsafe.Pointer, *Event) unsafe.Pointer
-	monotone_read    func(unsafe.Pointer, *Event) int
+	monotone_write   func(unsafe.Pointer, []monotoneEvent, int) int
+	monotone_cursor  func(unsafe.Pointer, unsafe.Pointer, *monotoneEvent) unsafe.Pointer
+	monotone_read    func(unsafe.Pointer, *monotoneEvent) int
 	monotone_next    func(unsafe.Pointer) int
 	monotone_execute func(unsafe.Pointer, string, *unsafe.Pointer) int
 )
@@ -53,38 +53,44 @@ func init() {
 }
 
 const (
-	FlagWrite  = 0
-	FlagDelete = 1
+	flagsWrite  = 0
+	flagsDelete = 1
 )
 
-func NewWriteEvent(id uint64, key string, value string) Event {
-	return newEvent(FlagWrite, id, key, value)
-}
-
-func NewDeleteEvent(id uint64, key string, value string) Event {
-	return newEvent(FlagDelete, id, key, value)
-}
-
-func newEvent(flags int, id uint64, key string, value string) Event {
-	keyPtr := unsafe.Pointer(unsafe.StringData(key))
-	valuePtr := unsafe.Pointer(unsafe.StringData(value))
-	return Event{
+func newMonotoneEvent(flags int, id uint64, key string, value string) monotoneEvent {
+	var keyPtr, valuePtr unsafe.Pointer
+	var keySize, valueSize uint64
+	if len(key) > 0 {
+		keyPtr = unsafe.Pointer(unsafe.StringData(key))
+		keySize = uint64(len(key))
+	}
+	if len(value) > 0 {
+		valuePtr = unsafe.Pointer(unsafe.StringData(value))
+		valueSize = uint64(len(value))
+	}
+	return monotoneEvent{
 		Flags:     flags,
 		Id:        id,
 		Key:       keyPtr,
-		KeySize:   uint64(len(key)),
+		KeySize:   keySize,
 		Value:     valuePtr,
-		ValueSize: uint64(len(value)),
+		ValueSize: valueSize,
 	}
 }
 
-type Event struct {
+type monotoneEvent struct {
 	Flags     int
 	Id        uint64
 	Key       unsafe.Pointer
 	KeySize   uint64
 	Value     unsafe.Pointer
 	ValueSize uint64
+}
+
+type Event struct {
+	Id    uint64
+	Key   string
+	Value string
 }
 
 func New() *Monotone {
@@ -107,7 +113,11 @@ func (m *Monotone) Open(s string) error {
 }
 
 func (m *Monotone) Write(batch []Event) error {
-	rc := monotone_write(m.env, batch, len(batch))
+	monotoneBatch := make([]monotoneEvent, len(batch))
+	for i, v := range batch {
+		monotoneBatch[i] = newMonotoneEvent(flagsWrite, v.Id, v.Key, v.Value)
+	}
+	rc := monotone_write(m.env, monotoneBatch, len(monotoneBatch))
 	if rc == -1 {
 		return m.Error()
 	}
@@ -115,7 +125,8 @@ func (m *Monotone) Write(batch []Event) error {
 }
 
 func (m *Monotone) Cursor(key Event) (*Cursor, error) {
-	cur := monotone_cursor(m.env, nil, &key)
+	monotoneKey := newMonotoneEvent(0, key.Id, key.Key, key.Value)
+	cur := monotone_cursor(m.env, nil, &monotoneKey)
 	if cur == nil {
 		return nil, m.Error()
 	}
@@ -156,8 +167,8 @@ func (c *Cursor) Read() (*Event, error) {
 		}
 	}
 
-	var event Event
-	rc := monotone_read(c.cur, &event)
+	var monotoneEvent monotoneEvent
+	rc := monotone_read(c.cur, &monotoneEvent)
 	if rc == -1 {
 		return nil, c.env.Error()
 	}
@@ -167,7 +178,21 @@ func (c *Cursor) Read() (*Event, error) {
 
 	c.total++
 
-	return &event, nil
+	var key, value string
+	if monotoneEvent.KeySize > 0 {
+		key = strings.Clone(unsafe.String((*byte)(monotoneEvent.Key), monotoneEvent.KeySize))
+		free(monotoneEvent.Key)
+	}
+	if monotoneEvent.ValueSize > 0 {
+		value = strings.Clone(unsafe.String((*byte)(monotoneEvent.Value), monotoneEvent.ValueSize))
+		free(monotoneEvent.Value)
+	}
+
+	return &Event{
+		Id:    monotoneEvent.Id,
+		Key:   key,
+		Value: value,
+	}, nil
 }
 
 func (c *Cursor) Total() int {
