@@ -189,11 +189,9 @@ func (c *Cursor) Read() (*Event, error) {
 	var key, value string
 	if monotoneEvent.KeySize > 0 {
 		key = strings.Clone(unsafe.String((*byte)(monotoneEvent.Key), monotoneEvent.KeySize))
-		free(monotoneEvent.Key)
 	}
 	if monotoneEvent.ValueSize > 0 {
 		value = strings.Clone(unsafe.String((*byte)(monotoneEvent.Value), monotoneEvent.ValueSize))
-		free(monotoneEvent.Value)
 	}
 
 	return &Event{
