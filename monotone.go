@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -57,15 +56,15 @@ const (
 	flagsDelete = 1
 )
 
-func newMonotoneEvent(flags int, id uint64, key string, value string) monotoneEvent {
+func newMonotoneEvent(flags int, id uint64, key []byte, value []byte) monotoneEvent {
 	var keyPtr, valuePtr unsafe.Pointer
 	var keySize, valueSize uint64
 	if len(key) > 0 {
-		keyPtr = unsafe.Pointer(unsafe.StringData(key))
+		keyPtr = unsafe.Pointer(unsafe.SliceData(key))
 		keySize = uint64(len(key))
 	}
 	if len(value) > 0 {
-		valuePtr = unsafe.Pointer(unsafe.StringData(value))
+		valuePtr = unsafe.Pointer(unsafe.SliceData(value))
 		valueSize = uint64(len(value))
 	}
 	return monotoneEvent{
@@ -89,8 +88,8 @@ type monotoneEvent struct {
 
 type Event struct {
 	Id    uint64
-	Key   string
-	Value string
+	Key   []byte
+	Value []byte
 }
 
 func New() *Monotone {
@@ -144,13 +143,13 @@ func (m *Monotone) Cursor(key Event) (*Cursor, error) {
 	}, nil
 }
 
-func (m *Monotone) Execute(command string) (string, error) {
+func (m *Monotone) Execute(command string) ([]byte, error) {
 	var result unsafe.Pointer
 	rc := monotone_execute(m.env, command, &result)
 	if rc == -1 {
-		return "", m.Error()
+		return nil, m.Error()
 	}
-	return goString(result), nil
+	return goStringBytes(result), nil
 }
 
 func (m *Monotone) Error() error {
@@ -186,12 +185,14 @@ func (c *Cursor) Read() (*Event, error) {
 
 	c.total++
 
-	var key, value string
+	var key, value []byte
 	if monotoneEvent.KeySize > 0 {
-		key = strings.Clone(unsafe.String((*byte)(monotoneEvent.Key), monotoneEvent.KeySize))
+		key = make([]byte, monotoneEvent.KeySize)
+		copy(key, unsafe.Slice((*byte)(monotoneEvent.Key), monotoneEvent.KeySize))
 	}
 	if monotoneEvent.ValueSize > 0 {
-		value = strings.Clone(unsafe.String((*byte)(monotoneEvent.Value), monotoneEvent.ValueSize))
+		value = make([]byte, monotoneEvent.ValueSize)
+		copy(value, unsafe.Slice((*byte)(monotoneEvent.Value), monotoneEvent.ValueSize))
 	}
 
 	return &Event{
@@ -206,12 +207,12 @@ func (c *Cursor) Total() int {
 }
 
 func (c *Cursor) Close() {
-	monotone_free(unsafe.Pointer(c.cur))
+	monotone_free(c.cur)
 }
 
-func goString(ptr unsafe.Pointer) string {
+func goStringBytes(ptr unsafe.Pointer) []byte {
 	if ptr == nil {
-		return ""
+		return nil
 	}
 	var length int
 	for {
@@ -220,7 +221,8 @@ func goString(ptr unsafe.Pointer) string {
 		}
 		length++
 	}
-	str := strings.Clone(string(unsafe.Slice((*byte)(ptr), length)))
+	bs := make([]byte, length)
+	copy(bs, unsafe.Slice((*byte)(ptr), length))
 	free(ptr)
-	return str
+	return bs
 }
