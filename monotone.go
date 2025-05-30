@@ -113,9 +113,17 @@ func (m *Monotone) Open(s string) error {
 }
 
 func (m *Monotone) Write(batch []Event) error {
+	return m.write(flagsWrite, batch)
+}
+
+func (m *Monotone) Delete(batch []Event) error {
+	return m.write(flagsDelete, batch)
+}
+
+func (m *Monotone) write(flags int, batch []Event) error {
 	monotoneBatch := make([]monotoneEvent, len(batch))
 	for i, v := range batch {
-		monotoneBatch[i] = newMonotoneEvent(flagsWrite, v.Id, v.Key, v.Value)
+		monotoneBatch[i] = newMonotoneEvent(flags, v.Id, v.Key, v.Value)
 	}
 	rc := monotone_write(m.env, monotoneBatch, len(monotoneBatch))
 	if rc == -1 {
