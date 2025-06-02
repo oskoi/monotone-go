@@ -6,6 +6,8 @@ import (
 	"io"
 	"unsafe"
 
+	"os"
+
 	"github.com/ebitengine/purego"
 )
 
@@ -34,7 +36,12 @@ func init() {
 		panic(fmt.Sprintf("open libc.so.6: %s", err))
 	}
 
-	libmonotone, err := purego.Dlopen("./libmonotone.so", purego.RTLD_LAZY)
+	libmonotonePath := os.Getenv("LIBMONOTONE_PATH")
+	if len(libmonotonePath) == 0 {
+		panic("env LIBMONOTONE_PATH not found")
+	}
+
+	libmonotone, err := purego.Dlopen(libmonotonePath, purego.RTLD_LAZY)
 	if err != nil {
 		panic(fmt.Sprintf("open libmonotone.so: %s", err))
 	}
