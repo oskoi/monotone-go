@@ -98,9 +98,9 @@ func (e *monotoneEvent) Event() *Event {
 }
 
 type Event struct {
-	Id    uint64
-	Key   []byte
-	Value []byte
+	Id    uint64 `json:"id,omitempty"`
+	Key   []byte `json:"key,omitempty"`
+	Value []byte `json:"value,omitempty"`
 }
 
 func New() *Monotone {
@@ -128,6 +128,14 @@ func (m *Monotone) Open(s string) error {
 		return m.Error()
 	}
 	return nil
+}
+
+func (m *Monotone) Read(key Event, n int) ([]*Event, error) {
+	cur, err := m.Cursor(key)
+	if err != nil {
+		return nil, fmt.Errorf("cursor: %w", err)
+	}
+	return cur.Read(n)
 }
 
 func (m *Monotone) Write(batch []*Event) error {
