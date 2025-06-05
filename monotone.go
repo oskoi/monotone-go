@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"unsafe"
 
 	"os"
@@ -17,17 +18,17 @@ var (
 )
 
 var (
-	free func(unsafe.Pointer)
+	free func(uintptr)
 
-	monotone_init    func() unsafe.Pointer
-	monotone_free    func(unsafe.Pointer) int
-	monotone_open    func(unsafe.Pointer, string) int
-	monotone_error   func(unsafe.Pointer) string
-	monotone_write   func(unsafe.Pointer, []monotoneEvent, int) int
-	monotone_cursor  func(unsafe.Pointer, unsafe.Pointer, *monotoneEvent) unsafe.Pointer
-	monotone_read    func(unsafe.Pointer, *monotoneEvent) int
-	monotone_next    func(unsafe.Pointer) int
-	monotone_execute func(unsafe.Pointer, string, *unsafe.Pointer) int
+	monotone_init    func() uintptr
+	monotone_free    func(uintptr) int32
+	monotone_open    func(uintptr, string) int32
+	monotone_error   func(uintptr) string
+	monotone_write   func(uintptr, unsafe.Pointer, int32) int32
+	monotone_cursor  func(uintptr, uintptr, unsafe.Pointer) uintptr
+	monotone_read    func(uintptr, unsafe.Pointer) int32
+	monotone_next    func(uintptr) int32
+	monotone_execute func(uintptr, string, *uintptr) int32
 )
 
 func init() {
@@ -41,7 +42,7 @@ func init() {
 		panic("env LIBMONOTONE_PATH not found")
 	}
 
-	libmonotone, err := purego.Dlopen(libmonotonePath, purego.RTLD_LAZY)
+	libmonotone, err := purego.Dlopen(libmonotonePath, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 	if err != nil {
 		panic(fmt.Sprintf("open libmonotone.so: %s", err))
 	}
@@ -63,17 +64,12 @@ const (
 	flagsDelete = 1
 )
 
-func newMonotoneEvent(flags int, id uint64, key []byte, value []byte) monotoneEvent {
-	var keyPtr, valuePtr unsafe.Pointer
-	var keySize, valueSize uint64
-	if len(key) > 0 {
-		keyPtr = unsafe.Pointer(unsafe.SliceData(key))
-		keySize = uint64(len(key))
-	}
-	if len(value) > 0 {
-		valuePtr = unsafe.Pointer(unsafe.SliceData(value))
-		valueSize = uint64(len(value))
-	}
+var ErrClosed = errors.New("closed")
+
+func newMonotoneEvent(flags int32, id uint64, key []byte, value []byte) monotoneEvent {
+	keyPtr, keySize := sliceBytesPtr(key)
+	valuePtr, valueSize := sliceBytesPtr(value)
+
 	return monotoneEvent{
 		Flags:     flags,
 		Id:        id,
@@ -85,12 +81,20 @@ func newMonotoneEvent(flags int, id uint64, key []byte, value []byte) monotoneEv
 }
 
 type monotoneEvent struct {
-	Flags     int
+	Flags     int32
 	Id        uint64
 	Key       unsafe.Pointer
 	KeySize   uint64
 	Value     unsafe.Pointer
 	ValueSize uint64
+}
+
+func (e *monotoneEvent) Event() *Event {
+	return &Event{
+		Id:    e.Id,
+		Key:   sliceBytes(e.Key, e.KeySize),
+		Value: sliceBytes(e.Value, e.ValueSize),
+	}
 }
 
 type Event struct {
@@ -107,10 +111,18 @@ func New() *Monotone {
 }
 
 type Monotone struct {
-	env unsafe.Pointer
+	env    uintptr
+	closed bool
+
+	mu sync.RWMutex
 }
 
 func (m *Monotone) Open(s string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
 	rc := monotone_open(m.env, s)
 	if rc == -1 {
 		return m.Error()
@@ -118,20 +130,32 @@ func (m *Monotone) Open(s string) error {
 	return nil
 }
 
-func (m *Monotone) Write(batch []Event) error {
+func (m *Monotone) Write(batch []*Event) error {
 	return m.write(flagsWrite, batch)
 }
 
-func (m *Monotone) Delete(batch []Event) error {
+func (m *Monotone) Delete(batch []*Event) error {
 	return m.write(flagsDelete, batch)
 }
 
-func (m *Monotone) write(flags int, batch []Event) error {
-	monotoneBatch := make([]monotoneEvent, len(batch))
-	for i, v := range batch {
-		monotoneBatch[i] = newMonotoneEvent(flags, v.Id, v.Key, v.Value)
+func (m *Monotone) write(flags int32, batch []*Event) error {
+	if len(batch) == 0 {
+		return nil
 	}
-	rc := monotone_write(m.env, monotoneBatch, len(monotoneBatch))
+
+	mbatch := make([]monotoneEvent, len(batch))
+	for i, v := range batch {
+		mbatch[i] = newMonotoneEvent(flags, v.Id, v.Key, v.Value)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return ErrClosed
+	}
+
+	rc := monotone_write(m.env, unsafe.Pointer(unsafe.SliceData(mbatch)), int32(len(mbatch)))
 	if rc == -1 {
 		return m.Error()
 	}
@@ -139,19 +163,30 @@ func (m *Monotone) write(flags int, batch []Event) error {
 }
 
 func (m *Monotone) Cursor(key Event) (*Cursor, error) {
-	monotoneKey := newMonotoneEvent(0, key.Id, key.Key, key.Value)
-	cur := monotone_cursor(m.env, nil, &monotoneKey)
-	if cur == nil {
-		return nil, m.Error()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, ErrClosed
 	}
+
+	mkey := newMonotoneEvent(0, key.Id, key.Key, nil)
+
 	return &Cursor{
-		env: m,
-		cur: cur,
+		db:  m,
+		key: &mkey,
 	}, nil
 }
 
 func (m *Monotone) Execute(command string) ([]byte, error) {
-	var result unsafe.Pointer
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, ErrClosed
+	}
+
+	var result uintptr
 	rc := monotone_execute(m.env, command, &result)
 	if rc == -1 {
 		return nil, m.Error()
@@ -164,60 +199,109 @@ func (m *Monotone) Error() error {
 }
 
 func (m *Monotone) Close() {
-	monotone_free(unsafe.Pointer(m.env))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return
+	}
+	m.closed = true
+
+	monotone_free(m.env)
 }
 
 type Cursor struct {
-	env   *Monotone
-	cur   unsafe.Pointer
-	total int
+	db  *Monotone
+	key *monotoneEvent
+	cur uintptr
 }
 
-func (c *Cursor) Read() (*Event, error) {
-	if c.total > 0 {
-		rc := monotone_next(c.cur)
+func (c *Cursor) open() error {
+	c.db.mu.RLock()
+	if c.db.closed {
+		c.db.mu.RUnlock()
+		return ErrClosed
+	}
+	cur := monotone_cursor(c.db.env, 0, unsafe.Pointer(c.key))
+	if cur == 0 {
+		c.db.mu.RUnlock()
+		return c.db.Error()
+	}
+	c.cur = cur
+	return nil
+}
+
+func (c *Cursor) advance(id uint64, key []byte) {
+	c.key.Id = id
+	c.key.Key, c.key.KeySize = sliceBytesPtr(key)
+}
+
+func (c *Cursor) close() {
+	monotone_free(c.cur)
+	c.cur = 0
+	c.db.mu.RUnlock()
+}
+
+func (c *Cursor) Read(n int) ([]*Event, error) {
+	if err := c.open(); err != nil {
+		return nil, err
+	}
+	defer c.close()
+
+	var event *Event
+	defer func() {
+		if event == nil {
+			return
+		}
+		c.advance(event.Id, event.Key)
+	}()
+
+	events := make([]*Event, 0, n)
+	for {
+		var mevent monotoneEvent
+		rc := monotone_read(c.cur, unsafe.Pointer(&mevent))
 		if rc == -1 {
-			return nil, c.env.Error()
+			return nil, c.db.Error()
+		}
+		if rc == 0 {
+			return events, io.EOF
+		}
+
+		event = mevent.Event()
+		if len(events) >= n {
+			return events, nil
+		}
+		events = append(events, event)
+
+		rc = monotone_next(c.cur)
+		if rc == -1 {
+			return nil, c.db.Error()
 		}
 	}
-
-	var monotoneEvent monotoneEvent
-	rc := monotone_read(c.cur, &monotoneEvent)
-	if rc == -1 {
-		return nil, c.env.Error()
-	}
-	if rc == 0 {
-		return nil, io.EOF
-	}
-
-	c.total++
-
-	var key, value []byte
-	if monotoneEvent.KeySize > 0 {
-		key = make([]byte, monotoneEvent.KeySize)
-		copy(key, unsafe.Slice((*byte)(monotoneEvent.Key), monotoneEvent.KeySize))
-	}
-	if monotoneEvent.ValueSize > 0 {
-		value = make([]byte, monotoneEvent.ValueSize)
-		copy(value, unsafe.Slice((*byte)(monotoneEvent.Value), monotoneEvent.ValueSize))
-	}
-
-	return &Event{
-		Id:    monotoneEvent.Id,
-		Key:   key,
-		Value: value,
-	}, nil
 }
 
-func (c *Cursor) Total() int {
-	return c.total
+func (c *Cursor) Key() *Event {
+	return c.key.Event()
 }
 
-func (c *Cursor) Close() {
-	monotone_free(c.cur)
+func sliceBytesPtr(bs []byte) (unsafe.Pointer, uint64) {
+	if len(bs) == 0 {
+		return nil, 0
+	}
+	return unsafe.Pointer(unsafe.SliceData(bs)), uint64(len(bs))
 }
 
-func goStringBytes(ptr unsafe.Pointer) []byte {
+func sliceBytes(ptr unsafe.Pointer, size uint64) []byte {
+	if size == 0 {
+		return nil
+	}
+	bs := make([]byte, size)
+	copy(bs, unsafe.Slice((*byte)(ptr), size))
+	return bs
+}
+
+func goStringBytes(c uintptr) []byte {
+	ptr := *(*unsafe.Pointer)(unsafe.Pointer(&c))
 	if ptr == nil {
 		return nil
 	}
@@ -230,6 +314,6 @@ func goStringBytes(ptr unsafe.Pointer) []byte {
 	}
 	bs := make([]byte, length)
 	copy(bs, unsafe.Slice((*byte)(ptr), length))
-	free(ptr)
+	free(c)
 	return bs
 }
