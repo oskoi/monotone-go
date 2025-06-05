@@ -4,26 +4,13 @@ Monotone Client is wrapper native [Monotone API](https://monotone.studio/docs/ap
 
 ## Installing
 
-Clone [Monotone](https://github.com/pmwkaa/monotone), install build dependencies (only linux environments) and build release.
-
-```
-git clone https://github.com/pmwkaa/monotone && cd monotone && make release
-```
-
-Next, copy `build/libmonotone.so` to your project and add monotone-go
-
 ```
 go get -u github.com/oskoi/monotone-go
 ```
 
 ## Example
 
-```
-LIBMONOTONE_PATH=<path to libmonotone.so> go run main.go
-```
-
 ```go
-// main.go
 package main
 
 import (

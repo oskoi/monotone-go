@@ -7,10 +7,15 @@ import (
 	"sync"
 	"unsafe"
 
-	"os"
+	_ "embed"
 
 	"github.com/ebitengine/purego"
 )
+
+// https://github.com/pmwkaa/monotone/commit/5a77290e72d8b1a2b0ca22f24acd014c9940677d
+//
+//go:embed libs/libmonotone.so
+var libmonotoneBytes []byte
 
 var (
 	libc        uintptr
@@ -32,17 +37,22 @@ var (
 )
 
 func init() {
+	path, closer, err := dumpEmbed()
+	if err != nil {
+		panic(fmt.Sprintf("dump libmonotone: %s", err))
+	}
+	defer func() {
+		if err := closer(); err != nil {
+			panic(fmt.Sprintf("error removing %s: %s", path, err))
+		}
+	}()
+
 	libc, err := purego.Dlopen("libc.so.6", purego.RTLD_NOW|purego.RTLD_GLOBAL)
 	if err != nil {
 		panic(fmt.Sprintf("open libc.so.6: %s", err))
 	}
 
-	libmonotonePath := os.Getenv("LIBMONOTONE_PATH")
-	if len(libmonotonePath) == 0 {
-		panic("env LIBMONOTONE_PATH not found")
-	}
-
-	libmonotone, err := purego.Dlopen(libmonotonePath, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
+	libmonotone, err := purego.Dlopen(path, purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 	if err != nil {
 		panic(fmt.Sprintf("open libmonotone.so: %s", err))
 	}
