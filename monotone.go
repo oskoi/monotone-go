@@ -1,6 +1,7 @@
 package monotone
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -111,6 +112,10 @@ type Event struct {
 	Id    uint64 `json:"id,omitempty"`
 	Key   []byte `json:"key,omitempty"`
 	Value []byte `json:"value,omitempty"`
+}
+
+func (a *Event) Equal(b *Event) bool {
+	return a.Id == b.Id && bytes.Equal(a.Key, b.Key) && bytes.Equal(a.Value, b.Value)
 }
 
 func New() *Monotone {
