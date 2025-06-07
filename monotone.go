@@ -76,13 +76,13 @@ const (
 
 var ErrClosed = errors.New("closed")
 
-func newMonotoneEvent(flags int32, id uint64, key []byte, value []byte) monotoneEvent {
-	keyPtr, keySize := sliceBytesPtr(key)
-	valuePtr, valueSize := sliceBytesPtr(value)
+func newMonotoneEvent(flags int32, event *Event) monotoneEvent {
+	keyPtr, keySize := sliceBytesPtr(event.Key)
+	valuePtr, valueSize := sliceBytesPtr(event.Value)
 
 	return monotoneEvent{
 		Flags:     flags,
-		Id:        id,
+		Id:        event.Id,
 		Key:       keyPtr,
 		KeySize:   keySize,
 		Value:     valuePtr,
@@ -140,7 +140,7 @@ func (m *Monotone) Open(s string) error {
 	return nil
 }
 
-func (m *Monotone) Read(key Event, n int) ([]*Event, error) {
+func (m *Monotone) Read(key *Event, n int) ([]*Event, error) {
 	cur, err := m.Cursor(key)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: %w", err)
@@ -162,8 +162,8 @@ func (m *Monotone) write(flags int32, batch []*Event) error {
 	}
 
 	mbatch := make([]monotoneEvent, len(batch))
-	for i, v := range batch {
-		mbatch[i] = newMonotoneEvent(flags, v.Id, v.Key, v.Value)
+	for i, event := range batch {
+		mbatch[i] = newMonotoneEvent(flags, event)
 	}
 
 	m.mu.Lock()
@@ -180,7 +180,7 @@ func (m *Monotone) write(flags int32, batch []*Event) error {
 	return nil
 }
 
-func (m *Monotone) Cursor(key Event) (*Cursor, error) {
+func (m *Monotone) Cursor(key *Event) (*Cursor, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -188,7 +188,10 @@ func (m *Monotone) Cursor(key Event) (*Cursor, error) {
 		return nil, ErrClosed
 	}
 
-	mkey := newMonotoneEvent(0, key.Id, key.Key, nil)
+	var mkey monotoneEvent
+	if key != nil {
+		mkey = newMonotoneEvent(0, key)
+	}
 
 	return &Cursor{
 		db:  m,

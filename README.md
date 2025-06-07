@@ -40,8 +40,7 @@ func main() {
 	}
 
 	// read all events, starting from zero
-	key := monotone.Event{}
-	cur, err := db.Cursor(key)
+	cur, err := db.Cursor(nil)
 	handleErr(err, "cursor")
 
 	total := 0
