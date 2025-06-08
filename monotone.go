@@ -2,6 +2,7 @@ package monotone
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -116,6 +117,11 @@ type Event struct {
 
 func (a *Event) Equal(b *Event) bool {
 	return a.Id == b.Id && bytes.Equal(a.Key, b.Key) && bytes.Equal(a.Value, b.Value)
+}
+
+func (e *Event) String() string {
+	bs, _ := json.Marshal(e)
+	return string(bs)
 }
 
 func New() *Monotone {
