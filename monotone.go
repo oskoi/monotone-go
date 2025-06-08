@@ -237,9 +237,10 @@ func (m *Monotone) Close() {
 }
 
 type Cursor struct {
-	db  *Monotone
-	key *monotoneEvent
-	cur uintptr
+	db   *Monotone
+	key  *monotoneEvent
+	skip bool
+	cur  uintptr
 }
 
 func (c *Cursor) open() error {
@@ -257,51 +258,72 @@ func (c *Cursor) open() error {
 	return nil
 }
 
-func (c *Cursor) advance(id uint64, key []byte) {
-	c.key.Id = id
-	c.key.Key, c.key.KeySize = sliceBytesPtr(key)
-}
-
 func (c *Cursor) close() {
 	monotone_free(c.cur)
 	c.cur = 0
 	c.db.mu.RUnlock()
 }
 
-func (c *Cursor) Read(n int) ([]*Event, error) {
-	if err := c.open(); err != nil {
-		return nil, err
+func (c *Cursor) advance(event *Event) {
+	c.key.Id = event.Id
+	c.key.Key, c.key.KeySize = sliceBytesPtr(event.Key)
+}
+
+func (c *Cursor) read() (*Event, error) {
+	mevent := new(monotoneEvent)
+	rc := monotone_read(c.cur, unsafe.Pointer(mevent))
+	if rc == -1 {
+		return nil, c.db.Error()
+	}
+	if rc == 0 {
+		return nil, io.EOF
+	}
+	return mevent.Event(), nil
+}
+
+func (c *Cursor) next() error {
+	rc := monotone_next(c.cur)
+	if rc == -1 {
+		return c.db.Error()
+	}
+	return nil
+}
+
+func (c *Cursor) Read(n int) (events []*Event, err error) {
+	if err = c.open(); err != nil {
+		return
 	}
 	defer c.close()
 
-	var event *Event
 	defer func() {
-		if event == nil {
-			return
+		if ln := len(events); ln > 0 {
+			c.skip = true
+			c.advance(events[ln-1])
 		}
-		c.advance(event.Id, event.Key)
 	}()
 
-	events := make([]*Event, 0, n)
+	if c.skip { // skip already read event
+		c.skip = false
+		if _, err = c.read(); err != nil {
+			return
+		}
+	}
+
+	var event *Event
+	events = make([]*Event, 0, n)
 	for {
-		var mevent monotoneEvent
-		rc := monotone_read(c.cur, unsafe.Pointer(&mevent))
-		if rc == -1 {
-			return nil, c.db.Error()
-		}
-		if rc == 0 {
-			return events, io.EOF
+		event, err = c.read()
+		if err != nil {
+			return
 		}
 
-		event = mevent.Event()
-		if len(events) >= n {
-			return events, nil
-		}
 		events = append(events, event)
+		if len(events) >= n {
+			return
+		}
 
-		rc = monotone_next(c.cur)
-		if rc == -1 {
-			return nil, c.db.Error()
+		if err = c.next(); err != nil {
+			return
 		}
 	}
 }
