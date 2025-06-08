@@ -309,13 +309,13 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 	}()
 
 	if c.skip { // skip already read event
-		c.skip = false
 		if _, err = c.read(); err != nil {
 			return
 		}
 		if err = c.next(); err != nil {
 			return
 		}
+		c.skip = false
 	}
 
 	var event *Event
