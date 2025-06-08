@@ -340,6 +340,10 @@ func (c *Cursor) Key() *Event {
 	return c.key.Event()
 }
 
+func (c *Cursor) Active() bool {
+	return c.active
+}
+
 func sliceBytesPtr(bs []byte) (unsafe.Pointer, uint64) {
 	if len(bs) == 0 {
 		return nil, 0
