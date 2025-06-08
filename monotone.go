@@ -243,10 +243,10 @@ func (m *Monotone) Close() {
 }
 
 type Cursor struct {
-	db   *Monotone
-	key  *monotoneEvent
-	skip bool
-	cur  uintptr
+	db     *Monotone
+	key    *monotoneEvent
+	cur    uintptr
+	active bool
 }
 
 func (c *Cursor) open() error {
@@ -303,12 +303,12 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 
 	defer func() {
 		if ln := len(events); ln > 0 {
-			c.skip = true
+			c.active = true
 			c.advance(events[ln-1])
 		}
 	}()
 
-	if c.skip { // skip already read event
+	if c.active { // skip already read event
 		if _, err = c.read(); err != nil {
 			return
 		}
