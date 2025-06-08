@@ -152,7 +152,7 @@ func (m *Monotone) Open(s string) error {
 }
 
 func (m *Monotone) Read(key *Event, n int) ([]*Event, error) {
-	cur, err := m.Cursor(key)
+	cur, err := m.Cursor(key, false)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: %w", err)
 	}
@@ -191,7 +191,7 @@ func (m *Monotone) write(flags int32, batch []*Event) error {
 	return nil
 }
 
-func (m *Monotone) Cursor(key *Event) (*Cursor, error) {
+func (m *Monotone) Cursor(key *Event, exclusive bool) (*Cursor, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -205,8 +205,9 @@ func (m *Monotone) Cursor(key *Event) (*Cursor, error) {
 	}
 
 	return &Cursor{
-		db:  m,
-		key: &mkey,
+		db:        m,
+		key:       &mkey,
+		exclusive: exclusive,
 	}, nil
 }
 
@@ -243,10 +244,10 @@ func (m *Monotone) Close() {
 }
 
 type Cursor struct {
-	db     *Monotone
-	key    *monotoneEvent
-	cur    uintptr
-	active bool
+	db        *Monotone
+	key       *monotoneEvent
+	cur       uintptr
+	exclusive bool
 }
 
 func (c *Cursor) open() error {
@@ -303,12 +304,12 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 
 	defer func() {
 		if ln := len(events); ln > 0 {
-			c.active = true
+			c.exclusive = true
 			c.advance(events[ln-1])
 		}
 	}()
 
-	if c.active { // skip already read event
+	if c.exclusive {
 		if _, err = c.read(); err != nil {
 			return
 		}
@@ -338,10 +339,6 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 
 func (c *Cursor) Key() *Event {
 	return c.key.Event()
-}
-
-func (c *Cursor) Active() bool {
-	return c.active
 }
 
 func sliceBytesPtr(bs []byte) (unsafe.Pointer, uint64) {

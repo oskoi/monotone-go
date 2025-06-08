@@ -40,7 +40,7 @@ func main() {
 	}
 
 	// read all events, starting from zero
-	cur, err := db.Cursor(nil)
+	cur, err := db.Cursor(nil, false)
 	handleErr(err, "cursor")
 
 	total := 0
