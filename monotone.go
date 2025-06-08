@@ -315,7 +315,6 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 		if err = c.next(); err != nil {
 			return
 		}
-		c.skip = false
 	}
 
 	var event *Event
