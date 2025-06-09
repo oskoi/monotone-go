@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"sync"
 	"unsafe"
 
@@ -318,11 +319,10 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 		}
 	}
 
-	var event *Event
 	events = make([]*Event, 0, n)
+	var event *Event
 	for {
-		event, err = c.read()
-		if err != nil {
+		if event, err = c.read(); err != nil {
 			return
 		}
 
@@ -333,6 +333,58 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 
 		if err = c.next(); err != nil {
 			return
+		}
+	}
+}
+
+func (c *Cursor) Stream() iter.Seq2[*Event, error] {
+	return func(yield func(*Event, error) bool) {
+		var err error
+		if err = c.open(); err != nil {
+			yield(nil, err)
+			return
+		}
+		defer c.close()
+
+		var advanceEvent *Event
+		defer func() {
+			if advanceEvent != nil {
+				c.exclusive = true
+				c.advance(advanceEvent)
+			}
+		}()
+
+		if c.exclusive {
+			if _, err = c.read(); err != nil {
+				if !errors.Is(err, io.EOF) {
+					yield(nil, err)
+				}
+				return
+			}
+			if err = c.next(); err != nil {
+				yield(nil, err)
+				return
+			}
+		}
+
+		var event *Event
+		for {
+			if event, err = c.read(); err != nil {
+				if !errors.Is(err, io.EOF) {
+					yield(nil, err)
+				}
+				return
+			}
+
+			advanceEvent = event
+			if !yield(event, nil) {
+				return
+			}
+
+			if err = c.next(); err != nil {
+				yield(nil, err)
+				return
+			}
 		}
 	}
 }
