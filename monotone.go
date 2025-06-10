@@ -337,11 +337,10 @@ func (c *Cursor) Read(n int) (events []*Event, err error) {
 	}
 }
 
-func (c *Cursor) Stream() iter.Seq2[*Event, error] {
-	return func(yield func(*Event, error) bool) {
-		var err error
+func (c *Cursor) Stream() (iter.Seq[*Event], func() error) {
+	var err error
+	return func(yield func(*Event) bool) {
 		if err = c.open(); err != nil {
-			yield(nil, err)
 			return
 		}
 		defer c.close()
@@ -356,13 +355,9 @@ func (c *Cursor) Stream() iter.Seq2[*Event, error] {
 
 		if c.exclusive {
 			if _, err = c.read(); err != nil {
-				if !errors.Is(err, io.EOF) {
-					yield(nil, err)
-				}
 				return
 			}
 			if err = c.next(); err != nil {
-				yield(nil, err)
 				return
 			}
 		}
@@ -370,23 +365,19 @@ func (c *Cursor) Stream() iter.Seq2[*Event, error] {
 		var event *Event
 		for {
 			if event, err = c.read(); err != nil {
-				if !errors.Is(err, io.EOF) {
-					yield(nil, err)
-				}
 				return
 			}
 
 			advanceEvent = event
-			if !yield(event, nil) {
+			if !yield(event) {
 				return
 			}
 
 			if err = c.next(); err != nil {
-				yield(nil, err)
 				return
 			}
 		}
-	}
+	}, func() error { return err }
 }
 
 func (c *Cursor) Key() *Event {
