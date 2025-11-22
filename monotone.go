@@ -16,7 +16,7 @@ import (
 	"github.com/ebitengine/purego"
 )
 
-// https://github.com/amelielabs/monotone/commit/05c49ef1256524b1d5cc71de2ce85058f1fd61a6
+// monotone 1.2.0
 //
 //go:embed libs/libmonotone.so
 var libmonotoneBytes []byte
