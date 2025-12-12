@@ -25,14 +25,14 @@ var (
 	free func(uintptr)
 
 	monotone_init    func() uintptr
-	monotone_free    func(uintptr) int32
-	monotone_open    func(uintptr, string) int32
+	monotone_free    func(uintptr)
 	monotone_error   func(uintptr) string
-	monotone_write   func(uintptr, unsafe.Pointer, int32) int32
-	monotone_cursor  func(uintptr, uintptr, unsafe.Pointer) uintptr
-	monotone_read    func(uintptr, unsafe.Pointer) int32
-	monotone_next    func(uintptr) int32
+	monotone_open    func(uintptr, string) int
 	monotone_execute func(uintptr, string, *uintptr) int32
+	monotone_write   func(uintptr, unsafe.Pointer, int) int
+	monotone_cursor  func(uintptr, uintptr, unsafe.Pointer) uintptr
+	monotone_read    func(uintptr, unsafe.Pointer) int
+	monotone_next    func(uintptr) int
 )
 
 var registerLib = sync.OnceFunc(func() {
@@ -80,7 +80,7 @@ const (
 
 var ErrClosed = errors.New("closed")
 
-func newMonotoneEvent(flags int32, event *Event) monotoneEvent {
+func newMonotoneEvent(flags int, event *Event) monotoneEvent {
 	keyPtr, keySize := sliceBytesPtr(event.Key)
 	valuePtr, valueSize := sliceBytesPtr(event.Value)
 
@@ -95,12 +95,12 @@ func newMonotoneEvent(flags int32, event *Event) monotoneEvent {
 }
 
 type monotoneEvent struct {
-	Flags     int32
+	Flags     int
 	Id        uint64
 	Key       unsafe.Pointer
-	KeySize   uint64
+	KeySize   uint
 	Value     unsafe.Pointer
-	ValueSize uint64
+	ValueSize uint
 }
 
 func (e *monotoneEvent) Event() *Event {
@@ -170,7 +170,7 @@ func (m *Monotone) Delete(batch []*Event) error {
 	return m.write(flagsDelete, batch)
 }
 
-func (m *Monotone) write(flags int32, batch []*Event) error {
+func (m *Monotone) write(flags int, batch []*Event) error {
 	if len(batch) == 0 {
 		return nil
 	}
@@ -187,7 +187,7 @@ func (m *Monotone) write(flags int32, batch []*Event) error {
 		return ErrClosed
 	}
 
-	rc := monotone_write(m.env, unsafe.Pointer(unsafe.SliceData(mbatch)), int32(len(mbatch)))
+	rc := monotone_write(m.env, unsafe.Pointer(unsafe.SliceData(mbatch)), len(mbatch))
 	if rc == -1 {
 		return m.Error()
 	}
@@ -390,14 +390,14 @@ func (c *Cursor) Key() *Event {
 	return c.key.Event()
 }
 
-func sliceBytesPtr(bs []byte) (unsafe.Pointer, uint64) {
+func sliceBytesPtr(bs []byte) (unsafe.Pointer, uint) {
 	if len(bs) == 0 {
 		return nil, 0
 	}
-	return unsafe.Pointer(unsafe.SliceData(bs)), uint64(len(bs))
+	return unsafe.Pointer(unsafe.SliceData(bs)), uint(len(bs))
 }
 
-func sliceBytes(ptr unsafe.Pointer, size uint64) []byte {
+func sliceBytes(ptr unsafe.Pointer, size uint) []byte {
 	if size == 0 {
 		return nil
 	}
