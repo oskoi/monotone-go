@@ -91,10 +91,16 @@ type monotoneEvent struct {
 }
 
 func (e *monotoneEvent) Event() *Event {
+	key := make([]byte, e.KeySize)
+	copy(key, unsafe.Slice(e.Key, e.KeySize))
+
+	value := make([]byte, e.ValueSize)
+	copy(value, unsafe.Slice(e.Value, e.ValueSize))
+
 	return &Event{
 		Id:    e.Id,
-		Key:   unsafe.Slice(e.Key, e.KeySize),
-		Value: unsafe.Slice(e.Value, e.ValueSize),
+		Key:   key,
+		Value: value,
 	}
 }
 
